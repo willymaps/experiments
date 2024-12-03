@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <title>Symbols</title>
+    <meta property="og:description" content="Initialize a map in an HTML element with MapLibre GL JS." />
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel='stylesheet' href='https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css' />
+    <script src='https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js'></script>
+    <script src='https://unpkg.com/@turf/turf@7.1.0/turf.min.js'></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        html,
+        body,
+        #map {
+            height: 100%;
+            position: relative;
+        }
+
+        #selection {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index:1;
+            vertical-align: middle;
+            font-size:14px;
+            font-family: sans-serif;
+        }
+
+        label {
+            vertical-align: top;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map">
+        <div id="selection">
+            <input type="radio" name="symbols" id="arrows" value="arrows" checked/><label for="arrows">Arrows</label>
+            <input type="radio" name="symbols" id="arcs" value="arcs" /><label for="arcs">Arcs</label>
+            <input type="radio" name="symbols" id="peaks" value="peaks" /><label for="peaks">Peaks</label>
+        </div>
+    </div>
+    <script>
+        const start = [-73.99, 40.716];
+        const offset = 0.25;
+        const initBbox = [(start[0] - (offset * 1.3)), (start[1] - offset), (start[0] + (offset * 1.3)), (start[1] + offset)];
+        const maxBbox = [(start[0] - (offset * 10)), (start[1] - (offset * 10)), (start[0] + (offset * 10)), (start[1] + (offset * 10))];
+        const cells = 2;
+        const gridOptions = { gridType: "square", property: "solRad", units: "miles", weight: 2 };
+        const pointOptions = { gridType: "point", property: "solRad", units: "miles", weight: 2 };
+        let currentId;
+        let currentSymbol = 'arrows';
+        let currentCenter = start;
+
+        let points = turf.featureCollection([
+            turf.point(start, { solRad: 0 }),
+            turf.point([initBbox[0], initBbox[1]], { solRad: -100 }),
+            turf.point([initBbox[0], initBbox[3]], { solRad: 0 }),
+            turf.point([initBbox[2], initBbox[3]], { solRad: 0 }),
+            turf.point([initBbox[2], initBbox[1]], { solRad: 0 })
+        ]);
+
+        const blank = {
+            "version": 8,
+            "sources": {},
+            "layers": []
+        }
+
+        document.querySelectorAll("input[name=symbols]").forEach((i) => {
+            i.addEventListener('change', (e) => {
+                currentSymbol = e.target.id;
+                updateSymbols(currentCenter);
+            });
+        });
+
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: blank,
+            center: [initBbox[0], initBbox[1]],
+            zoom: 9.2,
+            maplibreLogo: false,
+            pitch: 0,
+            bearing: 0,
+            maxZoom: 10,
+            maxBounds: maxBbox
+        });
+
+        map.on('load', () => {
+            initLayers();
+            map.on('move', (e) => {
+                const center = map.getCenter();
+                currentCenter = [center.lng, center.lat];
+                updateSymbols(currentCenter);
+            });
+        });
+
+        function updateSymbols(center) {
+            const newPoints = JSON.parse(JSON.stringify(points));
+            const point = turf.point(center, { solRad: 100 });
+            newPoints.features.push(point);
+            const grid = turf.interpolate(newPoints, cells, pointOptions);
+            const collection = buildSymbols(grid.features);
+            map.getSource('layer-lines-source').setData(collection[0]);
+            map.getSource('layer-heads-source').setData(collection[1]);
+        }
+
+        function buildSymbols(points) {
+            if (currentSymbol === 'arrows') {
+                return buildArrows(points);
+            } else if (currentSymbol === 'arcs') {
+                return buildArcs(points);
+            } else if (currentSymbol === 'peaks') {
+                return buildPeaks(points);
+            }
+        }
+
+        function buildArrows(gridPoints) {
+            const collectionLines = turf.featureCollection([]);
+            const collectionHeads = turf.featureCollection([]);
+            for (let p of gridPoints) {
+                const offsetX = Math.abs(p.properties.solRad) * 0.002;
+                const offsetY = Math.abs(p.properties.solRad) * 0.0005;
+                const arrowOffset = 0.003;
+                const xCalc = p.properties.solRad >= 0 ? (p.geometry.coordinates[0] + offsetX) : (p.geometry.coordinates[0] - offsetX);
+                const yCalc = p.properties.solRad >= 0 ? (p.geometry.coordinates[1] + offsetY) : (p.geometry.coordinates[1] - offsetY);
+                const line = turf.lineString([p.geometry.coordinates, [xCalc, yCalc]], { solRad: p.properties.solRad });
+                const angle = turf.bearing(turf.point(p.geometry.coordinates), turf.point([xCalc, yCalc]));
+                const head = turf.polygon([
+                        [
+                            [(xCalc), (yCalc + arrowOffset)],
+                            [(xCalc - arrowOffset), (yCalc - arrowOffset)],
+                            [(xCalc + arrowOffset), (yCalc - arrowOffset)],
+                            [(xCalc), (yCalc + arrowOffset)],
+                        ],
+                    ],
+                    { solRad: p.properties.solRad }
+                );
+                const rotation = angle;
+                const rotatedHead = turf.transformRotate(head, rotation)
+                const transformedHead = turf.transformTranslate(rotatedHead, 0.1, 0);
+                collectionLines.features.push(line);
+                collectionHeads.features.push(transformedHead);
+            }
+            return [collectionLines, collectionHeads]
+        }
+
+        function buildPeaks(gridPoints) {
+                const collectionLines = turf.featureCollection([]);
+                const collectionHeads = turf.featureCollection([]);
+                for (let p of gridPoints) {
+                    const offsetX = 100 * 0.00005;
+                    const offsetY = 100 * 0.00005;
+                    const peakOffset = (Math.abs(p.properties.solRad)) * 0.001;
+                    const peakCalc = p.properties.solRad >= 0 ? (p.geometry.coordinates[1] + peakOffset) : (p.geometry.coordinates[1] - peakOffset);
+                    const peak = turf.polygon([
+                        [
+                            [p.geometry.coordinates[0], peakCalc],
+                            [(p.geometry.coordinates[0] - offsetX), p.geometry.coordinates[1]],
+                            [(p.geometry.coordinates[0] + offsetX), p.geometry.coordinates[1]],
+                            [p.geometry.coordinates[0], peakCalc],
+                        ],
+                    ],
+                        { solRad: p.properties.solRad }
+                    );
+                    collectionLines.features.push(peak);
+                    collectionHeads.features.push(peak);
+                }
+                return [collectionLines, collectionHeads]
+            }
+
+
+        function buildArcs(gridPoints) {
+                const collectionLines = turf.featureCollection([]);
+                const collectionHeads = turf.featureCollection([]);
+                for (let p of gridPoints) {
+                    const offsetX = 100 * 0.0008;
+                    const offsetY = 100 * 0.0008;
+
+                    const z = Math.abs(p.properties.solRad);
+                    const x = (((p.geometry.coordinates[1] + offsetY) - offsetX) * 0.001) * Math.cos(Math.PI * z / 100);
+                    const y = ((p.geometry.coordinates[1] + offsetX) * 0.001) * Math.sin(Math.PI * z / 100);
+
+                    const arrowOffset = 0.003;
+                    const xCalc = Math.abs(p.properties.solRad) >= 0 ? (p.geometry.coordinates[0] + x) : (p.geometry.coordinates[0] - x);
+                    const yCalc = Math.abs(p.properties.solRad) >= 0 ? (p.geometry.coordinates[1] + y) : (p.geometry.coordinates[1] - y);
+                    const angle = turf.bearing(turf.point(p.geometry.coordinates), turf.point([xCalc, yCalc]));
+                    const line = turf.lineString([p.geometry.coordinates, [xCalc, yCalc]], { solRad: angle });
+
+                    const head = turf.polygon([
+                        [
+                            [(xCalc), (yCalc + arrowOffset)],
+                            [(xCalc - arrowOffset), (yCalc - arrowOffset)],
+                            [(xCalc + arrowOffset), (yCalc - arrowOffset)],
+                            [(xCalc), (yCalc + arrowOffset)],
+                        ],
+                    ],
+                        { solRad: angle }
+                    );
+                    const rotation = angle;
+                    const rotatedHead = turf.transformRotate(head, rotation)
+                    const transformedHead = turf.transformTranslate(rotatedHead, 0.1, 0);
+                    collectionLines.features.push(line);
+                    collectionHeads.features.push(transformedHead);
+                }
+                return [collectionLines, collectionHeads]
+            }
+
+        function initLayers() {
+            const layers = {};
+            const grid = turf.interpolate(points, cells, gridOptions);
+            const gridPoints = turf.interpolate(points, cells, pointOptions);
+            const collection = buildSymbols(gridPoints.features);
+            layers['grid'] = grid;
+            layers['lines'] = collection[0];
+            layers['heads'] = collection[1];
+            lineAndFill(layers);
+        }
+
+        function lineAndFill(d) {
+            for (const [key, value] of Object.entries(d)) {
+                const sourceName = `layer-${key}-source`;
+                const fillName = `fill-${key}-layer`;
+                const lineName = `line-${key}-layer`;
+                map.addSource(sourceName, {
+                    type: 'geojson',
+                    data: value,
+                    generateId: true
+                })
+                if (key === 'grid') {
+                    map.addLayer({
+                        id: lineName,
+                        type: 'line',
+                        source: sourceName,
+                        paint: {
+                            'line-color': '#efefef',
+                            'line-opacity': 0.5
+                        }
+                    });
+                } else if (key === 'heads') {
+                    map.addLayer({
+                        id: fillName,
+                        type: 'fill',
+                        source: sourceName,
+                        paint: {
+                            'fill-color': [
+                                'interpolate',
+                                ['linear'],
+                                ['get', 'solRad'],
+                                -100,
+                                'orange',
+                                0,
+                                '#efefef',
+                                100,
+                                'purple'
+                            ]
+                        }
+                    })
+                } else {
+                    map.addLayer({
+                        id: lineName,
+                        type: 'line',
+                        source: sourceName,
+                        paint: {
+                            'line-color': [
+                                'interpolate',
+                                ['linear'],
+                                ['get', 'solRad'],
+                                -100,
+                                'orange',
+                                0,
+                                '#efefef',
+                                100,
+                                'purple'
+                            ],
+                            'line-width': [
+                                'interpolate',
+                                ['linear'],
+                                ['zoom'],
+                                6,
+                                1,
+                                9,
+                                2,
+                                10,
+                                5
+                            ]
+                        }
+                    });
+                }
+            }
+        }
+    </script>
+</body>
+
+</html>
