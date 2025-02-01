@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Interpolate</title>
+    <meta property="og:description" content="Initialize a map in an HTML element with MapLibre GL JS." />
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+	<link rel='stylesheet' href='https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.css' />
+	<script src='https://unpkg.com/maplibre-gl@5.1.0/dist/maplibre-gl.js'></script>
+    <script src='https://unpkg.com/@turf/turf@7.1.0/turf.min.js'></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        html,
+        body,
+        #map {
+            height: 100%;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+    <script>
+        const start = [-73.99, 40.716];
+        const offset = 0.05;
+        let steps = 200;
+        let shift = 0;
+        let ring;
+        const maxBbox = [(start[0] - (offset * 10)), (start[1] - (offset * 10)), (start[0] + (offset * 10)), (start[1] + (offset * 10))];
+        const maxHeight = 200;
+        const bufferOptions = { units: "miles" };
+
+        const blank = {
+            "version": 8,
+            "sources": {},
+            "light": {
+                "intensity": 0.2
+            },
+            "layers": []
+        }
+
+        const map = new maplibregl.Map({
+            container: 'map',
+            style: blank,
+            center: [-73.99, 40.75],
+            zoom: window.innerWidth > 600 ? 11.2 : 10.5,
+            maplibreLogo: false,
+            pitch: 40,
+            bearing: 0,
+			doubleClickZoom: false,
+            maxBounds: maxBbox
+        });
+
+        let intervalId;
+
+        function changeSteps() {
+            if (!intervalId) {
+                intervalId = setInterval(moveSteps, 50);
+            }
+        }
+
+        function moveSteps() {
+            shift++;
+            if (shift > steps) {
+                shift = 1;
+            }
+            turf.featureEach(ring, function (c) {
+                const calc = c.properties.step + 1;
+                c.properties.step = calc >= steps ? 0 : calc;
+            });
+            map.getSource('layer-ring-source').setData(ring);
+        }
+
+        map.on('load', () => {
+            initLayers();
+            map.on('click', (e) => {
+                map.easeTo({
+					zoom: window.innerWidth > 600 ? 11.2 : 10.5,
+					center: map.getPitch() > 0 ? [-73.99, 40.716] : [-73.99, 40.75], 
+					pitch: map.getPitch() > 0 ? 0 : 40,
+					bearing: 0
+				});
+            });
+        });
+
+        function initLayers() {
+            const layers = {};
+            ring = buildRing();
+            layers['ring'] = ring;
+            lineAndFill(layers);
+			changeSteps();
+        }
+
+        function buildRing() {
+            const point = turf.point(start);
+            const bearingCalc = 720/steps;
+            const collection = turf.featureCollection([]);
+            for (let i=0; i<= steps;i++) {
+                const radius = 5;
+                const sector = turf.sector(point, radius, bearingCalc*i, bearingCalc*(i+1));
+				const buffered = turf.buffer(point, 2, bufferOptions);
+				const diff = turf.difference(turf.featureCollection([sector, buffered]));
+                diff.properties.step = i;
+                collection.features.push(diff)
+            }
+
+            return collection;
+        }
+
+        function lineAndFill(d) {
+            for (const [key, value] of Object.entries(d)) {
+                const sourceName = `layer-${key}-source`;
+                const fillName = `fill-${key}-layer`;
+                const lineName = `line-${key}-layer`;
+                map.addSource(sourceName, {
+                    type: 'geojson',
+                    data: value,
+                    generateId: true
+                }).addLayer({
+                    id: fillName,
+                    type: 'fill-extrusion',
+                    source: sourceName,
+                    paint: {
+                        'fill-extrusion-color': [
+                            'interpolate',
+                            ['linear'],
+                            ['get', 'step'],
+                            0,
+                            '#fff',
+                            steps/2,
+                            '#111',
+                            steps,
+                            '#fff'
+                        ],
+                        'fill-extrusion-opacity': 1,
+                        'fill-extrusion-height': ['*', ['*', ['get', 'step'], steps], 0.25],
+                        'fill-extrusion-base': ['*', ['-', ['*', ['get', 'step'], steps], steps], 0.249]
+                    }
+                }).addLayer({
+                    id: lineName,
+                    type: 'line',
+                    source: sourceName,
+                    paint: {
+                        'line-color': '#d3d3d3',
+                        'line-opacity': 0
+                    }
+                });
+            }
+        }
+    </script>
+</body>
+
+</html>
