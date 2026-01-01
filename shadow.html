@@ -576,6 +576,22 @@
 
       function baseMapLayers() {
         map
+          .addSource("shape-source", {
+            type: "geojson",
+            data: feature,
+          })
+          .addLayer({
+            id: "shape-layer",
+            type: "fill",
+            source: "shape-source",
+            paint: {
+              "fill-color": "rgba(255,255,255,1)",
+              "fill-outline-color": "rgba(0,0,0,0)",
+              "fill-antialias": false,
+            },
+          });
+
+        map
           .addSource("raster-source", {
             type: "image",
             url: "california.png",
@@ -591,28 +607,23 @@
             type: "raster",
             source: "raster-source",
             paint: {
-              "raster-opacity": 1,
+              "raster-opacity": 0.9,
             },
           });
 
-        map
-          .addSource("shape-source", {
-            type: "geojson",
-            data: feature,
-          })
-          .addLayer({
-            id: "shape-line",
-            type: "line",
-            source: "shape-source",
-            layout: {
-              "line-join": "round",
-              "line-cap": "round",
-            },
-            paint: {
-              "line-color": "rgba(0,0,0,0.85)",
-              "line-width": 1,
-            },
-          });
+        map.addLayer({
+          id: "shape-line",
+          type: "line",
+          source: "shape-source",
+          layout: {
+            "line-join": "round",
+            "line-cap": "round",
+          },
+          paint: {
+            "line-color": "rgba(0,0,0,0.85)",
+            "line-width": 1,
+          },
+        });
 
         map
           .addSource("point-source", {
@@ -696,7 +707,7 @@
                   "fill-antialias": false,
                 },
               },
-              "raster-layer"
+              "shape-layer"
             );
         }
       }
