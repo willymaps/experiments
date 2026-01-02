@@ -25,12 +25,139 @@
       #map {
         height: 100%;
       }
+
+      #selection {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1;
+        font-size: 14px;
+        font-family: sans-serif;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+      }
+
+      .selector {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 150px;
+      }
+
+      label {
+        text-align: left;
+      }
+
+      input {
+        text-align: right;
+        max-width: 75px;
+      }
     </style>
   </head>
 
   <body>
-    <div id="map"></div>
+    <div id="map">
+      <div id="selection">
+        <div class="selector">
+          <label for="ringDistance">Distance</label>
+          <input
+            type="range"
+            name="symbols"
+            id="ringDistance"
+            min="1"
+            max="5"
+            step="0.1"
+            value="1"
+          />
+        </div>
+        <div class="selector">
+          <label for="ringNumber">Number</label>
+          <input
+            type="range"
+            name="symbols"
+            id="ringNumber"
+            min="1"
+            max="3"
+            step="0.1"
+            value="1"
+          />
+        </div>
+        <div class="selector">
+          <label for="showLines">Show lines</label>
+          <input
+            type="checkbox"
+            name="symbols"
+            id="showLines"
+            value="showLines"
+            onchange="showLines = this.checked;"
+          />
+        </div>
+        <div class="selector">
+          <label for="animateLines">Animate lines</label>
+          <input
+            type="checkbox"
+            name="symbols"
+            id="animateLines"
+            value="animateLines"
+            onchange="animateLines = this.checked;"
+          />
+        </div>
+      </div>
+    </div>
     <script>
+      let ringDistance = 1;
+      let ringNumber = 1;
+      let showLines = false;
+      let lineFilter = [];
+      let animating = false;
+      let interval;
+
+      function animate() {
+        if (animating) return;
+        interval = setInterval(() => {
+          animating = true;
+
+          // increment each value in lineFilter by 1, reset to 1 if greater than shadowDetail
+          const shadowDetail = 30 * ringNumber;
+          lineFilter = lineFilter.map((val) => {
+            const newVal = val + 1;
+            return newVal > shadowDetail ? 1 : newVal;
+          });
+          lineFilter.sort((a, b) => a - b);
+
+          // create a set to avoid duplicates in the filter array
+          const uniqueLineFilter = [...new Set(lineFilter)];
+          map.setFilter("shadow-line", [
+            "match",
+            ["get", "lineNum"],
+            uniqueLineFilter,
+            true,
+            false,
+          ]);
+        }, 180);
+      }
+
+      function updateRings() {
+        const rings = buildRings();
+        if (map.getSource("shadow-source")) {
+          // after building new rings, update the source data
+          map.getSource("shadow-source").setData(rings);
+          if (showLines) {
+            map.setLayoutProperty("shadow-line", "visibility", "visible");
+            map.setFilter("shadow-line", [
+              "match",
+              ["get", "lineNum"],
+              lineFilter,
+              true,
+              false,
+            ]);
+          } else {
+            map.setLayoutProperty("shadow-line", "visibility", "none");
+          }
+        }
+      }
+
       const start = [-120, 36.7];
       const maxBbox = [-125, 32, -113.5, 42.5];
 
@@ -530,9 +657,6 @@
       const blank = {
         version: 8,
         sources: {},
-        light: {
-          intensity: 0,
-        },
         projection: {
           type: "mercator",
         },
@@ -572,6 +696,77 @@
         baseMapLayers();
         const rings = buildRings();
         addShadow(rings);
+      }
+
+      function buildRings() {
+        // get line values from shadow detail to show 10 lines evenly spaced
+        const shadowDetail = 30 * ringNumber;
+        const lineVal = Math.ceil(shadowDetail / 10);
+        lineFilter = Array.from({ length: 10 }, (_, i) => (i + 1) * lineVal);
+
+        // build buffers using turf
+        const bufferOptions = {
+          units: "miles",
+          steps: 50,
+        };
+
+        // loop through showDetail, which represents the number of rings to create
+        const buffers = [];
+        for (let i = 1; i <= shadowDetail; i++) {
+          const offset = i * 0.85 * ringDistance;
+          const buf = turf.buffer(feature, offset, bufferOptions);
+
+          // add these properties to each buffer for styling and filtering
+          buf.features[0].properties = {
+            opacity: 1.2 - i / shadowDetail,
+            lineNum: i,
+          };
+          buffers.push(buf);
+        }
+        return {
+          type: "FeatureCollection",
+          features: buffers.flatMap((buffer) => buffer.features),
+        };
+      }
+
+      function addShadow(d) {
+        map
+          .addSource("shadow-source", {
+            type: "geojson",
+            data: d,
+          })
+          .addLayer(
+            {
+              id: "shadow-layer",
+              type: "fill",
+              source: "shadow-source",
+              paint: {
+                "fill-color": "rgba(0,0,0,0.015)",
+                "fill-opacity": ["get", "opacity"],
+                "fill-outline-color": "rgba(0,0,0,0)",
+                "fill-antialias": false,
+              },
+            },
+            "shape-layer"
+          )
+          .addLayer(
+            {
+              id: "shadow-line",
+              type: "line",
+              source: "shadow-source",
+              filter: ["match", ["get", "lineNum"], lineFilter, true, false],
+              layout: {
+                "line-join": "round",
+                "line-cap": "round",
+                visibility: showLines ? "visible" : "none",
+              },
+              paint: {
+                "line-color": "rgba(0,0,0,0.15)",
+                "line-opacity": ["get", "opacity"],
+              },
+            },
+            "shape-layer"
+          );
       }
 
       function baseMapLayers() {
@@ -666,51 +861,24 @@
           });
       }
 
-      function buildRings() {
-        const shadowDetail = 30;
-        const bufferOptions = {
-          units: "miles",
-          steps: 5,
-        };
-        const buffers = [];
-        for (let i = 1; i <= shadowDetail; i++) {
-          const buf = turf.buffer(feature, i * 0.85, bufferOptions);
-          buf.features[0].properties = { opacity: 1 - i / shadowDetail };
-          buffers.push(buf);
-        }
-        return {
-          type: "FeatureCollection",
-          features: buffers.flatMap((buffer) => buffer.features),
-        };
-      }
-
-      function addShadow(d) {
-        for (const [key, value] of Object.entries(d.features)) {
-          const sourceName = `layer-${key}-source`;
-          const fillName = `fill-${key}-layer`;
-          const lineName = `line-${key}-layer`;
-          map
-            .addSource(sourceName, {
-              type: "geojson",
-              data: value,
-              generateId: true,
-            })
-            .addLayer(
-              {
-                id: lineName,
-                type: "fill",
-                source: sourceName,
-                paint: {
-                  "fill-color": "rgba(0,0,0,0.015)",
-                  "fill-opacity": ["get", "opacity"],
-                  "fill-outline-color": "rgba(0,0,0,0)",
-                  "fill-antialias": false,
-                },
-              },
-              "shape-layer"
-            );
-        }
-      }
+      document.querySelectorAll("input[name=symbols]").forEach((i) => {
+        i.addEventListener("change", (e) => {
+          const currentSymbol = e.target;
+          if (currentSymbol.id === "ringDistance") {
+            ringDistance = parseFloat(currentSymbol.value);
+          } else if (currentSymbol.id === "ringNumber") {
+            ringNumber = parseFloat(currentSymbol.value);
+          } else if (currentSymbol.id === "animateLines") {
+            if (currentSymbol.checked && !animating) {
+              animate();
+            } else {
+              clearInterval(interval);
+              animating = false;
+            }
+          }
+          updateRings();
+        });
+      });
     </script>
   </body>
 </html>
